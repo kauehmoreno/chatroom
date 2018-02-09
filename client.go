@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
 	r "github.com/dancannon/gorethink"
@@ -20,26 +19,32 @@ type Client struct {
 	userName     string
 }
 
-func NewClient(socket *websocket.Conn, findHandler FindHandler, session *r.Session) *Client {
-	var user User
-	user.Name = "anônimo"
-	rs, err := r.Table("user").Insert(user).RunWrite(session)
-	if err != nil {
-		log.Println(err.Error())
+func (c *Client) NewStopChannel(stopKey int) chan bool {
+	c.StopForKey(stopKey)
+	stop := make(chan bool)
+	c.stopChannels[stopKey] = stop
+	return stop
+}
+
+func (c *Client) StopForKey(key int) {
+	if ch, found := c.stopChannels[key]; found {
+		ch <- true
+		delete(c.stopChannels, key)
 	}
-	var id string
-	if len(rs.GeneratedKeys) > 0 {
-		id = rs.GeneratedKeys[0]
+}
+
+func (client *Client) Read() {
+	var message Message
+	for {
+		if err := client.socket.ReadJSON(&message); err != nil {
+			break
+		}
+		// Decide what function should we call based on msg.Name
+		if handler, found := client.findHandler(message.Name); found {
+			handler(client, message.Data)
+		}
 	}
-	return &Client{
-		send:         make(chan Message),
-		socket:       socket,
-		findHandler:  findHandler,
-		session:      session,
-		id:           id,
-		userName:     user.Name,
-		stopChannels: make(map[int]chan bool),
-	}
+	client.socket.Close()
 }
 
 func (client *Client) Write() {
@@ -51,40 +56,35 @@ func (client *Client) Write() {
 	client.socket.Close()
 }
 
-func (client *Client) Read() {
-	var msg Message
-	for {
-		if err := client.socket.ReadJSON(&msg); err != nil {
-			break
-		}
-		// Decide what function should we call based on msg.Name
-		if handler, found := client.findHandler(msg.Name); found {
-			handler(client, msg.Data)
-		}
-	}
-	client.socket.Close()
-}
-
-func (client *Client) NewStopChannels(stopKey int) chan bool {
-	client.StopChannelForKey(stopKey)
-	stop := make(chan bool)
-	client.stopChannels[stopKey] = stop
-	fmt.Println(stop)
-	return stop
-}
-
 // Close conenctions with channels
-func (client *Client) Close() {
-	for _, channel := range client.stopChannels {
-		channel <- true
+func (c *Client) Close() {
+	for _, ch := range c.stopChannels {
+		ch <- true
 	}
-	close(client.send)
-	r.Table("user").Get(client.id).Delete().Exec(client.session)
+	close(c.send)
+	// delete user
+	r.Table("user").Get(c.id).Delete().Exec(c.session)
 }
 
-func (client *Client) StopChannelForKey(key int) {
-	if ch, found := client.stopChannels[key]; found {
-		ch <- true
-		delete(client.stopChannels, key)
+func NewClient(socket *websocket.Conn, findHandler FindHandler,
+	session *r.Session) *Client {
+	var user User
+	user.Name = "anonymous"
+	res, err := r.Table("user").Insert(user).RunWrite(session)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	var id string
+	if len(res.GeneratedKeys) > 0 {
+		id = res.GeneratedKeys[0]
+	}
+	return &Client{
+		send:         make(chan Message),
+		socket:       socket,
+		findHandler:  findHandler,
+		session:      session,
+		stopChannels: make(map[int]chan bool),
+		id:           id,
+		userName:     user.Name,
 	}
 }
