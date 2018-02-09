@@ -16,8 +16,9 @@ func main() {
 	if err != nil {
 		log.Panic(err.Error())
 	}
+
 	router := NewRouter(session)
-	// http.HandleFunc("/", socketHandler)
+
 	router.Handle("channel add", addChannel)
 	router.Handle("channel subscribe", subscribeChannel)
 	router.Handle("channel unsubscribe", unsubscribeChannel)
@@ -29,7 +30,6 @@ func main() {
 	router.Handle("message add", addChannelMessage)
 	router.Handle("message subscribe", subscribeChannelMessage)
 	router.Handle("message unsubscribe", unsubscribeChannelMessage)
-
 	http.Handle("/", router)
 	http.ListenAndServe(":8888", nil)
 }
